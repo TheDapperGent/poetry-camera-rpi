@@ -400,7 +400,7 @@ def check_internet_connection():
   i = 0
   #Loop runs 
   while i < 1:
-    if internet_connected = True:
+    if internet_connected == True:
     print("Checking internet connection upon startup")
     printer.println("\n")
     printer.justify('C') # center align header text
