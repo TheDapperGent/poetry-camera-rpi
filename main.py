@@ -397,7 +397,13 @@ def get_poem_format():
 ################################
 # Checks internet connection upon startup
 def check_internet_connection():
-  i = 0
+
+  print("Checking internet connection upon startup")
+  printer.println("\n")
+  printer.justify('C') # center align header text
+  printer.println("hello, i am")
+  printer.println("poetry camera")
+  
   global internet_connected
   try:
     # Check for internet connectivity
@@ -421,16 +427,6 @@ def check_internet_connection():
     printer.println("i need internet to work!")
     printer.println('connect to PoetryCameraSetup wifi network (pw: "password") on your phone or laptop to fix me!')
 
-   #Loop runs 
-  while i < 1:
-    if internet_connected == True:
-      print("Checking internet connection upon startup")
-      printer.println("\n")
-      printer.justify('C') # center align header text
-      printer.println("hello, i am")
-      printer.println("poetry camera")
-      i = 1
-      
   printer.println("\n\n\n\n\n")
 
 ###########################
