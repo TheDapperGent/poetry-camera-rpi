@@ -397,13 +397,11 @@ def get_poem_format():
 ################################
 # Checks internet connection upon startup
 def check_internet_connection():
-
   print("Checking internet connection upon startup")
-  printer.println("\n")
   printer.justify('C') # center align header text
   printer.println("hello, i am")
   printer.println("poetry camera")
-  
+
   global internet_connected
   try:
     # Check for internet connectivity
