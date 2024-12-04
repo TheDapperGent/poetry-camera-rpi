@@ -32,7 +32,7 @@ PRINTER_HEAT_TIME = 190 # darker prints than Adafruit library default (130), max
 def initialize():
   # Set up status LED
   global led
-  led = LED(26)
+  led = LED(23)
   led.blink() # blink LED while setting up
 
   # Load environment variables
@@ -59,7 +59,7 @@ def initialize():
 
   # Set up shutter button
   global shutter_button
-  shutter_button = Button(16)
+  shutter_button = Button(25)
 
   # button event handlers
   # putting this at the top so that any camera init issues (where we enter indefinite blinking mode)
@@ -100,17 +100,17 @@ def initialize():
   # Set up knob, if you are using a knob
   global current_knob, knobs
 
-  knob1 = Button(17)
-  knob2 = Button(27)
-  knob3 = Button(22)
-  knob4 = Button(5)
-  knob5 = Button(6)
-  knob6 = Button(13)
-  knob7 = Button(19)
-  knob8 = Button(25)
+  #knob1 = Button(17)
+  #knob2 = Button(27)
+  #knob3 = Button(22)
+  #knob4 = Button(5)
+  #knob5 = Button(6)
+  #knob6 = Button(13)
+  #knob7 = Button(19)
+  #knob8 = Button(25)
 
-  knobs = [knob1, knob2, knob3, knob4, knob5, knob6, knob7, knob8]
-  get_current_knob()
+  #knobs = [knob1, knob2, knob3, knob4, knob5, knob6, knob7, knob8]
+  #get_current_knob()
 
   # Server URL
   global SERVER_URL
