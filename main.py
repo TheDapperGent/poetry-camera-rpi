@@ -83,7 +83,7 @@ def initialize():
 
   # Set up shutter button & status LED
   global shutter_button, led
-  shutter_button = Button(16)
+  shutter_button = Button(25)
   led = LED(26)
   led.on()
 
@@ -100,7 +100,7 @@ def initialize():
   knob5 = Button(6)
   knob6 = Button(13)
   knob7 = Button(19)
-  knob8 = Button(25)
+  knob8 = Button(26)
 
   # Check internet connectivity upon startup
   global internet_connected 
