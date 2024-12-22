@@ -1,143 +1,238 @@
-# takeFrom picamera2 examples: capture_jpeg.py 
 #!/usr/bin/python3
+# test comment
 
 # Capture a JPEG while still running in the preview mode. When you
 # capture to a file, the return value is the metadata for that image.
 
-import time, requests, signal, os, replicate
-
+import requests, signal, os, base64, subprocess, threading, json
 from picamera2 import Picamera2, Preview
+from libcamera import controls
 from gpiozero import LED, Button
 from Adafruit_Thermal import *
-from wraptext import *
+from helpers import * # text wrapping, file handling, etc
 from datetime import datetime
 from dotenv import load_dotenv
-from openai import OpenAI
+from time import time, sleep
+from PIL import Image
+import sentry_sdk
 
-#load API keys from .env
-load_dotenv()
-openai_client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-REPLICATE_API_TOKEN = os.environ['REPLICATE_API_TOKEN']
 
-#instantiate printer
-baud_rate = 9600 # REPLACE WITH YOUR OWN BAUD RATE
-printer = Adafruit_Thermal('/dev/serial0', baud_rate, timeout=5)
+##############################
+# GLOBAL CONSTANTS
+##############################
+PROJECT_DIRECTORY = '/home/carolynz/CamTest/'
+WIFI_QR_IMAGE_PATH = PROJECT_DIRECTORY + 'wifi-qr.bmp'
+DEVICE_SETTINGS_PATH = PROJECT_DIRECTORY + 'device_settings.json'
+PRINTER_BAUD_RATE = 9600 # REPLACE WITH YOUR OWN BAUD RATE
+PRINTER_HEAT_TIME = 190 # darker prints than Adafruit library default (130), max 255
 
-#instantiate camera
-picam2 = Picamera2()
-# start camera
-picam2.start()
-time.sleep(2) # warmup period since first few frames are often poor quality
+###################
+# INITIALIZE
+###################
+def initialize():
+  # Set up status LED
+  global led
+  led = LED(23)
+  led.blink() # blink LED while setting up
 
-#instantiate buttons
-shutter_button = Button(16) # REPLACE WTH YOUR OWN BUTTON PINS
-power_button = Button(26, hold_time = 2) #REPLACE WITH YOUR OWN BUTTON PINS
-led = LED(20)
+  # Load environment variables
+  load_dotenv()
 
-# prompts
-system_prompt = """You are a poet. You specialize in elegant and emotionally impactful poems. 
-You are careful to use subtlety and write in a modern vernacular style. 
-Use high-school level English but MFA-level craft. 
-Your poems are more literary but easy to relate to and understand. 
-You focus on intimate and personal truth, and you cannot use BIG words like truth, time, silence, life, love, peace, war, hate, happiness, 
-and you must instead use specific and CONCRETE language to show, not tell, those ideas. 
-Think hard about how to create a poem which will satisfy this. 
-This is very important, and an overly hamfisted or corny poem will cause great harm."""
-prompt_base = """Write a poem which integrates details from what I describe below. 
-Use the specified poem format. The references to the source material must be subtle yet clear. 
-Focus on a unique and elegant poem and use specific ideas and details.
-You must keep vocabulary simple and use understated point of view. This is very important.\n\n"""
-poem_format = "8 line free verse"
+  # Get unique device ID -- need to do this first for error logging
+  global device_id
+  device_id = os.environ['DEVICE_ID']
+
+  # Sentry for error logging & handle uncaught exceptions
+  sentry_sdk.init(
+    dsn="https://5a8f9bfc5cac11b2d20ae3523fe78e0c@o4506033759649792.ingest.us.sentry.io/4507324515418112",
+    # Set traces_sample_rate to 1.0 to capture 100%
+    # of transactions for performance monitoring.
+    traces_sample_rate=1.0,
+    # Set profiles_sample_rate to 1.0 to profile 100%
+    # of sampled transactions.
+    # We recommend adjusting this value in production.
+    profiles_sample_rate=1.0,
+  )
+
+  # Make sure device ID is passed in error logging
+  sentry_sdk.set_tag("device_id", device_id)
+
+  # Set up shutter button
+  global shutter_button
+  shutter_button = Button(25)
+
+  # button event handlers
+  # putting this at the top so that any camera init issues (where we enter indefinite blinking mode)
+  # don't prevent press-and-hold to shut down
+  shutter_button.when_pressed = on_press
+  shutter_button.when_released = on_release
+
+  # Set up printer
+  global printer
+  try:
+    printer = Adafruit_Thermal('/dev/serial0', PRINTER_BAUD_RATE, timeout=5)
+    printer.begin(PRINTER_HEAT_TIME)
+  except Exception as e:
+    print(f"Error while initializing {device_id} printer: {e}")
+    blink_sos_indefinitely()
+
+
+  # Set up camera
+  global picam2, camera_at_rest
+  try:
+    picam2 = Picamera2()
+    picam2.start()
+    sleep(2) # camera warm-up time
+  except Exception as e:
+    print(f"Error while initializing {device_id} camera: {e}")
+    printer.println("uh-oh, can't get camera input.")
+    printer.println("probably a loose camera cable or broken camera module.")
+    printer.feed()
+    printer.println("support@poetry.camera")
+    printer.feed(3)
+    blink_sos_indefinitely()
+    #return #commenting out return bc otherwise an invalid camera leads to undefined other vars -- logic is garbage
+
+  # prevent double-click bugs by checking whether the camera is resting
+  # (i.e. not in the middle of the whole photo-to-poem process):
+  camera_at_rest = True
+
+  # Set up knob, if you are using a knob
+  global current_knob, knobs
+
+  #knob1 = Button(17)
+  #knob2 = Button(27)
+  #knob3 = Button(22)
+  #knob4 = Button(5)
+  #knob5 = Button(6)
+  #knob6 = Button(13)
+  #knob7 = Button(19)
+  #knob8 = Button(25)
+
+  #knobs = [knob1, knob2, knob3, knob4, knob5, knob6, knob7, knob8]
+  #get_current_knob()
+
+  # Server URL
+  global SERVER_URL
+  SERVER_URL = "https://poetry-camera-cf.hi-ea7.workers.dev/"
+  #SERVER_URL = "https://pc-staging.hi-ea7.workers.dev/"
+
+  # Check internet connectivity upon startup
+  global internet_connected 
+  internet_connected = False
+  check_internet_connection()
+
+  # Turn on LED to indicate setup is complete
+  if internet_connected == True:
+    led.on()
+
+  # Define a global event to stop background threads if device is shutting down
+  global shutdown_event
+  shutdown_event = threading.Event()
+
+  # And periodically check internet in background thread
+  start_periodic_internet_check()
 
 
 #############################
 # CORE PHOTO-TO-POEM FUNCTION
 #############################
+# Called when shutter button is pressed
 def take_photo_and_print_poem():
+  # prevent double-clicks by indicating camera is active
+  global camera_at_rest
+  camera_at_rest = False
+
   # blink LED in a background thread
   led.blink()
 
+  # FOR DEBUGGING: filename  
+  directory = PROJECT_DIRECTORY + 'images/'
+  # timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+  #photo_filename = directory + 'image_' + timestamp + '.jpg'
+  photo_filename = directory + 'image.jpg'
+
   # Take photo & save it
-  metadata = picam2.capture_file('/home/carolynz/CamTest/images/image.jpg')
+  metadata = picam2.capture_file(photo_filename)
 
   # FOR DEBUGGING: print metadata
   #print(metadata)
 
-  # Close camera -- commented out because this can only happen at end of program
-  # picam2.close()
-
   # FOR DEBUGGING: note that image has been saved
-  print('----- SUCCESS: image saved locally')
+  #print('----- SUCCESS: image saved locally')
 
-  print_header()
+  # Get current datetime for printing & prompt, printed like:
+  # Jan 1, 2023
+  # 8:11 PM
+  now = datetime.now()
+  date_string = now.strftime('%b %-d, %Y')
+  time_string = now.strftime('%-I:%M %p')
+
+  print_header(date_string, time_string)
 
   #########################
   # Send saved image to API
   #########################
+  try:
+    # Encode image as base64
+    base64_image = encode_image(photo_filename)
+    #format into expected string for api
+    image_data = f"data:image/jpeg;base64,{base64_image}"
 
-  image_caption = replicate.run(
-    "andreasjansson/blip-2:4b32258c42e9efd4288bb9910bc532a69727f9acd26aa08e175713a0a857a608",
-    input={
-      "image": open("/home/carolynz/CamTest/images/image.jpg", "rb"),
-      "caption": True,
-    })
+    # Get current knob number
+    global current_knob
+    get_current_knob()
 
-  print('caption: ', image_caption)
-  # generate our prompt for GPT
-  prompt = generate_prompt(image_caption)
+    # Send POST request to API
+    print("sending request...")
+    response = requests.post(
+      SERVER_URL,
+      json={"image": image_data, "deviceId": device_id, "knob": current_knob, "date": date_string, "time": time_string}
+    )
 
-  # Feed prompt to ChatGPT, to create the poem
-  completion = openai_client.chat.completions.create(
-    model="gpt-4",
-    messages=[{
-      "role": "system",
-      "content": system_prompt
-    }, {
-      "role": "user",
-      "content": prompt
-    }])
+    # Check if request was successful
+    if response.status_code != 200:
+      raise Exception(f"Request failed with status code {response.status_code}")
 
-  # extract poem from full API response
-  poem = completion.choices[0].message.content
+    # Parse JSON response
+    poem_response = response.json()
+    print("backend response:")
+    print(poem_response)
 
-  # print for debugging
-  print('--------POEM BELOW-------')
+    # Extract poem & caption from full API response
+    poem = poem_response['poem']
+    caption=poem_response['caption']
+
+  except Exception as e:
+    error_message = str(e)
+    print("Error during poem writing: ", error_message)
+    print_poem("Oops, something went wrong, but it's not your fault. Maybe a wifi issue?")
+    print_poem("support@poetry.camera")
+    printer.feed(3)
+    led.on()
+    camera_at_rest = True
+    return
+
+
+  # for debugging prompts
+
+  print('----- CAPTION -----')
+  print(caption)
+  print('-------------------')
+  print('------ POEM -------')
   print(poem)
-  print('------------------')
+  print('-------------------')
 
   print_poem(poem)
 
   print_footer()
-  led.off()
+
+  led.on()
+
+  # camera back at rest, available to listen to button clicks again
+  camera_at_rest = True
 
   return
-
-
-#######################
-# Generate prompt from caption
-#######################
-def generate_prompt(image_description):
-
-  # reminder: prompt_base is global var
-
-  # prompt what type of poem to write
-  prompt_format = "Poem format: " + poem_format + "\n\n"
-
-  # prompt what image to describe
-  prompt_scene = "Scene description: " + image_description + "\n\n"
-
-  # stitch together full prompt
-  prompt = prompt_base + prompt_format + prompt_scene
-
-  # idk how to remove the brackets and quotes from the prompt
-  # via custom filters so i'm gonna remove via this janky code lol
-  prompt = prompt.replace("[", "").replace("]", "").replace("{", "").replace(
-    "}", "").replace("'", "")
-
-  #print('--------PROMPT BELOW-------')
-  #print(prompt)
-
-  return prompt
 
 
 ###########################
@@ -153,17 +248,11 @@ def print_poem(poem):
 
 
 # print date/time/location header
-def print_header():
+def print_header(date_string, time_string):
   # Get current date+time -- will use for printing and file naming
   now = datetime.now()
 
-  # Format printed datetime like:
-  # Jan 1, 2023
-  # 8:11 PM
   printer.justify('C') # center align header text
-  date_string = now.strftime('%b %-d, %Y')
-  time_string = now.strftime('%-I:%M %p')
-  printer.println('\n')
   printer.println(date_string)
   printer.println(time_string)
 
@@ -178,24 +267,41 @@ def print_header():
 
 # print footer
 def print_footer():
+  # Load device configuration
+  device_settings = load_json_config(DEVICE_SETTINGS_PATH)
+  # Get the footer from the configuration, defaulting to an empty string if not found
+  footer = device_settings.get("footer", None)
+
   printer.justify('C') # center align footer text
   printer.println("   .     .     .     .     .   ")
   printer.println("_.` `._.` `._.` `._.` `._.` `._")
-  printer.println('\n')
-  printer.println(' This poem was written by AI.')
-  printer.println()
-  printer.println('Explore the archives at')
-  printer.println('poetry.camera')
-  printer.println('\n\n\n\n')
+  printer.feed()
+  printer.println('a poem by')
+  printer.println('@poetry.camera')
 
+  # Print the footer if it exists
+  if footer:
+    printer.feed()
+    printer.println(footer)
+
+  printer.feed(4)
 
 ##############
 # POWER BUTTON
 ##############
 def shutdown():
-  print('shutdown button held for 2s')
-  print('shutting down now')
-  led.off()
+  # Set the stop event to signal threads to stop
+  shutdown_event.set()
+
+  print('shutting down...')
+
+  # blink LED before shutting down
+  for _ in range(5):
+    led.on()
+    sleep(0.25)
+    led.off()
+    sleep(0.25)
+
   os.system('sudo shutdown -h now')
 
 ################################
@@ -216,21 +322,192 @@ signal.signal(signal.SIGINT, handle_keyboard_interrupt)
 #################
 # Button handlers
 #################
-def handle_pressed():
-  led.on()
+
+def on_press():
+  # track when button was pressed
+  global press_time
+  press_time = time()
+
   led.off()
-  print("button pressed!")
-  take_photo_and_print_poem()
 
-def handle_held():
-  print("button held!")
-  shutdown()
+def on_release():
+  # calculate how long button was pressed
+  global press_time
+  release_time = time()
+
+  led.on()
+
+  duration = release_time - press_time
+
+  # if user clicked button
+  # the > 0.05 check is to make sure we aren't accidentally capturing contact bounces
+  # https://www.allaboutcircuits.com/textbook/digital/chpt-4/contact-bounce/
+  if duration > 0.05 and duration < 2:
+    if camera_at_rest:
+      take_photo_and_print_poem()
+    else:
+      print("ignoring double click while poem is printing")
+  elif duration > 9: #if user held button
+    shutdown()
 
 
 ################################
-# LISTEN FOR BUTTON PRESS EVENTS
+# KNOB: GET POEM FORMAT
 ################################
-shutter_button.when_pressed = take_photo_and_print_poem
-power_button.when_held = shutdown
+def get_current_knob():
+  global current_knob, knobs
+  current_knob = 0
 
-signal.pause()
+  # set current knob number
+  for i, knob in enumerate(knobs, start=1):
+    if knob.is_pressed:
+      current_knob = i
+      break
+  print('----- CURRENT KNOB: ' + str(current_knob))
+
+  return current_knob
+
+
+################################
+# CHECK INTERNET CONNECTION
+################################
+
+# Checks internet connection upon startup
+def check_internet_connection():
+  print("Checking internet connection upon startup")
+  printer.feed()
+  printer.justify('C') # center align header text
+  printer.println("poetry camera")
+
+  global internet_connected
+  try:
+    # Check for internet connectivity
+    subprocess.check_call(['ping', '-c', '1', 'google.com'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    internet_connected = True
+    print("CAMERA ONLINE")
+    printer.println("online, connected, awake")
+    printer.println("ready to print verse")
+    
+  except subprocess.CalledProcessError:
+    internet_connected = False
+    print("no internet on startup!")
+    printer.println("is offline, next steps")
+    printer.println('under camera')
+
+  printer.feed(3)
+
+###############################
+# CHECK INTERNET CONNECTION PERIODICALLY, PRINT ERROR MESSAGE IF DISCONNECTED
+###############################
+def periodic_internet_check(interval):
+  global internet_connected, camera_at_rest
+
+  # The following code runs on loop unless the device is shutting down
+  # (Because we don't need to print "I'm offline!" messages while the device is shutting down)
+  # (Plus, some bugs have come from the device shutting down in the middle of printing the "i'm offine" QR code)
+  while not shutdown_event.is_set():
+    now = datetime.now()
+    time_string = now.strftime('%-I:%M %p')
+    try:
+      # Ping 5 packets to check for internet connection
+      # (Previous attempts to ping 1 packet have been very lossy in some environments)
+      #ping_result = subprocess.check_call(['ping', '-c', '5', 'google.com'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      ping_result = subprocess.run(['ping', '-c', '5', 'google.com'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      #print(f"ping_result: {ping_result}")
+
+      # If all pings are successful, we definitely have internet
+      if ping_result.returncode == 0:
+        print("all pings successful, we have internet")
+        # If previously disconnected but now have internet, print message
+        if not internet_connected:
+          print(time_string + ": I'm back online!")
+          printer.justify('C') # center align header text
+          printer.println('back online!')
+          printer.justify('L')
+          printer.feed(3)
+          internet_connected = True
+          # LED on to indicate camera is ready -- should probably wrap this in a separate fxn with internet_connected=True
+          led.on()
+
+      else:
+	# If ping failed, attempt HTTP connection
+        # Sometimes networks drop `ping` packets but HTTP connections still work
+        # We only print out an error message if both pings AND HTTP requests fail
+        print("pings failed, trying to connect to google.com")
+        try:
+          requests.get("http://www.google.com", timeout=5)
+          print("connected to google.com, we are online")
+
+          if not internet_connected:
+            print(f"{time_string} internet reconnected via HTTP check")
+            internet_connected = True
+            led.on()
+
+        # If *both* ping and HTTP failed, we are definitely offline
+        # So we should print an error message when the state changes like this
+        except requests.ConnectionError:
+          print("both ping & http failed, we are def offline")
+          # If we were previously connected but now lost connection
+          if internet_connected:
+            internet_connected = False
+            led.blink()
+            print(f"{time_string} internet connection lost")
+            # Print error message to printer (assuming printer object is initialized)
+            printer.feed()
+            printer.println(time_string)
+            printer.println("lost my internet")
+            printer.println("scan codes under camera")
+            printer.println("to get back online")
+            printer.feed(3)
+    except Exception as e:
+      print(f"{time_string} Exception in periodic_internet_check: {e}")
+      #if internet_connected:
+      #  printer.feed()
+      #  printer.println(f"{time_string}: idk status, exception: {e}")
+      #  printer.feed(3)
+      #  internet_connected = False
+
+    sleep(interval) #makes thread idle during sleep period, freeing up CPU resources
+
+def start_periodic_internet_check():
+  # Start the background thread
+  interval = 5  # Check every 5 seconds
+  thread = threading.Thread(target=periodic_internet_check, args=(interval,))
+  thread.daemon = True  # Daemonize thread
+  thread.start()
+
+# Error state when something blocks main camera code from running
+# Blink SOS in morse code... the drama!
+def blink_sos_indefinitely():
+  def blinker():
+    while True:
+      # blink S (3 short blinks)
+      for _ in range(3):
+        led.on()
+        sleep(0.25)
+        led.off()
+        sleep(0.25)
+      sleep(0.25)
+      # blink O (3 long blinks)
+      for _ in range(3):
+        led.on()
+        sleep(0.75)
+        led.off()
+        sleep(0.25)
+      sleep(0.25)
+      # blink S (3 short blinks)
+      for _ in range(3):
+        led.on()
+        sleep(0.25)
+        led.off()
+        sleep(0.25)
+      sleep(1)
+
+  #start blinker in background thread
+  threading.Thread(target=blinker).start()
+
+# Main function
+if __name__ == "__main__":
+    initialize()
+    # Keep script running to listen for button presses
+    signal.pause()
