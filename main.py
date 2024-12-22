@@ -20,7 +20,7 @@ import sentry_sdk
 ##############################
 # GLOBAL CONSTANTS
 ##############################
-PROJECT_DIRECTORY = '/home/carolynz/CamTest/'
+PROJECT_DIRECTORY = '/home/aaron/poetry-camera-rpi/'
 WIFI_QR_IMAGE_PATH = PROJECT_DIRECTORY + 'wifi-qr.bmp'
 DEVICE_SETTINGS_PATH = PROJECT_DIRECTORY + 'device_settings.json'
 PRINTER_BAUD_RATE = 9600 # REPLACE WITH YOUR OWN BAUD RATE
