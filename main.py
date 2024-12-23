@@ -55,7 +55,7 @@ Do not be corny or cliche'd or use generic concepts like time, death, love. This
 If there are people where gender is uncertain or not mentioned, use gender-neutral pronouns like 'they' or 'you.' \n\n"""
 # Poem format (e.g. sonnet, haiku) is set via get_poem_format() below
 
-PROJECT_DIRECTORY = os.path.expanduser('~') +  "/poetry-camera-rpi/"
+home_directory = os.path.expanduser('~') +  "/poetry-camera-rpi/"
 
 
 def initialize():
@@ -125,10 +125,10 @@ def take_photo_and_print_poem():
 
   # Save photo to a local directory (so we can convert it to base64 later)
   # NOTE: only the latest image is stored; this overwrites any past images.
-  photo_filename = PROJECT_DIRECTORY + '/images/image.jpg'
+  photo_filename = home_directory + "image.jpg"
 
   # Take photo & save it
-  metadata = picam2.capture_file(photo_filename)
+  metadata = picam2.capture_file(home_directory + "image.jpg")
 
   # FOR DEBUGGING: print metadata
   #print(metadata)
