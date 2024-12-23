@@ -128,7 +128,6 @@ def take_photo_and_print_poem():
   photo_filename = home_directory + "image.jpg"
 
   # Take photo & save it
-  metadata = picam2.capture_file(home_directory + "image.jpg")
 
   # FOR DEBUGGING: print metadata
   #print(metadata)
