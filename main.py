@@ -55,7 +55,7 @@ Do not be corny or cliche'd or use generic concepts like time, death, love. This
 If there are people where gender is uncertain or not mentioned, use gender-neutral pronouns like 'they' or 'you.' \n\n"""
 # Poem format (e.g. sonnet, haiku) is set via get_poem_format() below
 
-PROJECT_DIRECTORY = '/home/carolynz/CamTest' # SET TO YOUR OWN PROJECT DIRECTORY -- DO NOT INCLUDE END SLASH
+PROJECT_DIRECTORY = os.path.expanduser('~') +  "/poetry-camera-rpi/"
 
 
 def initialize():
