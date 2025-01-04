@@ -373,24 +373,6 @@ def on_release():
 def get_poem_format():
   poem_format = '4 line free verse. Do not rhyme. DO NOT EXCEED 4 LINES.'
 
-  if knob1.is_pressed:
-    poem_format = '4 line free verse. Do not rhyme. DO NOT EXCEED 4 LINES.'
-  elif knob2.is_pressed:
-    poem_format = 'Modern Sonnet. The poem must match the format of a sonnet, but it should be written in modern vernacular english, it must not be written in olde english.'
-  elif knob3.is_pressed:
-    poem_format = 'limerick. DO NOT EXCEED 5 LINES.'
-  elif knob4.is_pressed:
-    poem_format = 'couplet. You must write a poem that is only two lines long. Make sure to incorporate elements from the image. It must be only two lines.'
-  elif knob5.is_pressed:
-    poem_format = 'poem where each word begins with the same letter. It must be four lines or less.'
-  elif knob6.is_pressed:
-    poem_format = 'poem where each word is a verb. It must be four lines or less.'
-  elif knob7.is_pressed:
-    poem_format = 'haiku. You must match the 5 syllable, 7 syllable, 5 syllable format. It must not rhyme'
-  elif knob8.is_pressed:
-    poem_format = '8 line rhyming poem. Do not exceed 8 lines.'
-  print('----- POEM FORMAT: ' + poem_format)
-
   return poem_format
 
 
